@@ -3,3 +3,4 @@ PyOpenGL
 PyOpenGL_accelerate
 numpy
 pyrr
+pywavefront
