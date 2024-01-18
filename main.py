@@ -1,104 +1,55 @@
 import pygame
 from OpenGL.GL import *
-from OpenGL.GL.shaders import compileProgram, compileShader
 import numpy as np
 import ctypes
 import os
 import pyrr
-import pywavefront
 
-def create_shader(vertex_filepath, fragment_filepath) -> int:
-    vertex_file = open(vertex_filepath,'r')
-    fragment_file = open(fragment_filepath,'r')
-    vertex_src = vertex_file.readlines()
-    fragment_src = fragment_file.readlines()
-    shader = compileProgram(compileShader(vertex_src, GL_VERTEX_SHADER),compileShader(fragment_src, GL_FRAGMENT_SHADER))
-    
-    vertex_file.close()
-    fragment_file.close()
-
-    return shader
-
-def loadVertices(mesh):
-    vertices = []
-    for vertex in mesh.vertices:
-        vertices.extend(vertex)
-    return vertices
-
-def loadIndices(mesh):
-    indices = []
-    for mesh_in in mesh.mesh_list:
-        for face in mesh_in.faces:
-            indices.extend(face)
-    return indices
-
-class Cube:
-    def __init__(self, position, eulers):
-        self.position = np.array(position, dtype=np.float32)
-        self.eulers = np.array(eulers, dtype=np.float32)
-
-class Mesh:
-    def __init__(self):
-        mesh = pywavefront.Wavefront("sphere.obj", collect_faces=True)
-        
-        #x,y,z,r,g,b (for every vertex)
-        vertices = loadVertices(mesh)
-        vertices = np.array(vertices, dtype=np.float32)
-
-        indices = loadIndices(mesh)
-        indices = np.array(indices, dtype=np.uint32)
-
-        self.vertex_count = len(vertices) // 6
-        self.indices_count = len(indices)
-
-        self.vao = glGenVertexArrays(1)
-        glBindVertexArray(self.vao)
-        
-        self.vbo_vertices = glGenBuffers(1) 
-        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_vertices) 
-        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
-        self.vbo_indices = glGenBuffers(1)
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.vbo_indices) 
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
-
-        glEnableVertexAttribArray(0)
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 24, ctypes.c_void_p(0))
-        
-        glEnableVertexAttribArray(1)
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 24, ctypes.c_void_p(12))
-    
-    def arm_for_drawing(self):
-        glBindVertexArray(self.vao)
-
-    def draw(self):
-        glDrawElements(GL_TRIANGLES, self.indices_count, GL_UNSIGNED_INT, None)
-    
-    def destroy(self):
-        glDeleteVertexArrays(1,(self.vao,))
-        glDeleteBuffers(1,(self.vbo_vertices,))
-        glDeleteBuffers(1,(self.vbo_indices,))
-
+from shader import *
+from mesh import *
+from sphere import *
+from model_transform import *
+from rotate import *
 
 pygame.init()
 pygame.display.set_mode((0,0), pygame.OPENGL | pygame.DOUBLEBUF | pygame.FULLSCREEN)
+pygame.display.gl_set_attribute(pygame.GL_SWAP_CONTROL, 1)
 clock = pygame.time.Clock()
 glEnable(GL_DEPTH_TEST)
-glClearColor(0,0,0,1) #rgba
+glClearColor(0,0,0,1)  #rgba
 
-shader = create_shader(vertex_filepath = "shaders/vertex.txt",
-                    fragment_filepath = "shaders/fragment.txt")
+shader = create_shader(vertex_filepath = "shaders/vertex.txt", fragment_filepath = "shaders/fragment.txt")
 glUseProgram(shader)
 
-my_cube = Cube(
-    position = [0,0,-8],
-    eulers = [0,0,0]
-)
+offset = [0,0,-8]
+mouse_sensitivity = 0.1
 
-my_cube_mesh = Mesh()
+nucleons = [
+Sphere(
+    position = [-0.25,0,0-8],
+    eulers = [0,0,0],
+    mesh = Mesh("proton.obj")
+),
+Sphere(
+    position = [0.25,0,0-8],
+    eulers = [0,0,0],
+    mesh = Mesh("neutron.obj")
+),
+Sphere(
+    position = [0,0.4330127018922193,0-8],
+    eulers = [0,0,0],
+    mesh = Mesh("neutron.obj")
+),
+Sphere(
+    position = [0, 0.2165063509461097, 0.433012701892219-8],
+    eulers = [0,0,0],
+    mesh = Mesh("proton.obj")
+)
+]
 
 projection_transform = pyrr.matrix44.create_perspective_projection(
-    fovy = 45, aspect = 1366/768, #EEEEEEEEEEEEEEE
-    near = 0.1, far = 10, dtype = np.float32
+    fovy = 45, aspect = pygame.display.Info().current_w/pygame.display.Info().current_h,
+    near = 0.1, far = 20, dtype = np.float32
 )
 
 glUniformMatrix4fv(
@@ -107,47 +58,32 @@ glUniformMatrix4fv(
 )
 modelMatrixLocation = glGetUniformLocation(shader, "model")
 
+delta_theta = np.pi / 256 #radians
 
 running = True
 while(running):
     for event in pygame.event.get():
         if(event.type == pygame.QUIT):
             running = False
+        if event.type == pygame.MOUSEWHEEL:
+            offset[2] += mouse_sensitivity*event.y
 
     #logic
-    my_cube.eulers[2] += 0.7
-    if(my_cube.eulers[2] > 360):
-        my_cube.eulers[2] = 0
-
-
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-    
-    #do things here
-    glUseProgram(shader) # may remove
+    glUseProgram(shader) # you may remove this ##############################################################################
 
-    model_transform = pyrr.matrix44.create_identity(dtype=np.float32)
-    model_transform = pyrr.matrix44.multiply(
-        m1=model_transform,
-        m2=pyrr.matrix44.create_from_eulers(
-            eulers=np.radians(my_cube.eulers),
-            dtype=np.float32
-        )
-    )
-    model_transform = pyrr.matrix44.multiply(
-        m1=model_transform,
-        m2=pyrr.matrix44.create_from_translation(
-            vec=my_cube.position,
-            dtype=np.float32
-        )
-    )
-    glUniformMatrix4fv(modelMatrixLocation, 1, GL_FALSE, model_transform)
+    for nucleon in nucleons:
+        new_positions = rotate_about_origin(nucleon.position[0],nucleon.position[2],delta_theta, offset[2])
+        nucleon.position[0] = new_positions[0]
+        nucleon.position[2] = new_positions[1]
 
-    my_cube_mesh.arm_for_drawing()
-    my_cube_mesh.draw()
+    for nucleon in nucleons:
+        glUniformMatrix4fv(modelMatrixLocation, 1, GL_FALSE, create_model_transform(nucleon, offset))
+        nucleon.mesh.draw()
     
     pygame.display.flip()
-
     clock.tick(60)  
 
-my_cube_mesh.destroy()
+for nucleon in nucleons:
+    nucleon.mesh.destroy()
 glDeleteProgram(shader)
